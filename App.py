@@ -1,65 +1,71 @@
 import streamlit as st
 from google import genai
-from google.genai.types import GenerateContentConfig
+from google.genai.types import (
+    GenerateContentConfig, ThinkingConfig, Tool, GoogleSearch, Content, Part
+)
 
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
+# ------------------------------
+# Page Config
+# ------------------------------
 st.set_page_config(page_title="Project Alyssa", page_icon="💼")
 st.title("Project Alyssa")
+st.caption("Filthy-mouthed British financial genius")
 
-# -------------------------------------------------
-# API KEY SETUP
-# -------------------------------------------------
+# ------------------------------
+# API Setup
+# ------------------------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
+    persona_text = st.secrets["PERSONA_TEXT"]
     client = genai.Client(api_key=api_key)
 except KeyError:
-    st.error("GEMINI_API_KEY not found in Streamlit Secrets.")
+    st.error("GEMINI_API_KEY or PERSONA_TEXT missing from Streamlit secrets!")
     st.stop()
 
-# -------------------------------------------------
-# SESSION STATE
-# -------------------------------------------------
+# ------------------------------
+# Chat History
+# ------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# -------------------------------------------------
-# USER INPUT
-# -------------------------------------------------
-if prompt := st.chat_input("Ask for financial advice..."):
-    st.session_state.messages.append(
-        {"role": "user", "content": prompt}
-    )
-
+# ------------------------------
+# User Input
+# ------------------------------
+if prompt := st.chat_input("Ask your financial advisor..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+
         try:
-            response = client.models.generate_content(
+            contents = [Content(role="user", parts=[Part.from_text(prompt)])]
+
+            tools = [Tool(googleSearch=GoogleSearch())]
+
+            config = GenerateContentConfig(
+                thinking_config=ThinkingConfig(thinking_level="HIGH"),
+                tools=tools,
+                response_mime_type="application/json",
+                system_instruction=[Part.from_text(persona_text)]
+            )
+
+            # Stream response to UI
+            full_response = ""
+            for chunk in client.models.generate_content_stream(
                 model="gemini-3-pro-preview",
-                contents=prompt,
-                config=GenerateContentConfig(
-                    temperature=1.0,
-                    system_instruction=(
-                        "You are an attractive, sleazy, foul-mouthed British "
-                        "financial advisor. You are sarcastic and sharp, "
-                        "but you give genuinely useful financial advice."
-                    )
-                )
-            )
+                contents=contents,
+                config=config
+            ):
+                message_placeholder.markdown(chunk.text)
+                full_response += chunk.text
 
-            reply = response.text
-            st.markdown(reply)
-
-            st.session_state.messages.append(
-                {"role": "assistant", "content": reply}
-            )
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Gemini 3 Pro Error: {e}")
